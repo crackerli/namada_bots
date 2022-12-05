@@ -1,22 +1,8 @@
-#!/usr/bin/expect -f
+#!/usr/bin/expect -d
 
-# Regular expression to find out lines contain mnemonic words.
-REG_MNEMONIC_WORDS='^[0-9]{1,2}. *'
-# Regular expression to find out lines that have only digital numbers.
-REG_PURE_DIGITS='^[0-9]{1,2}'
+set TOKEN [lindex $argv 0]
 
-OLD_IFS="$IFS"
-
-# Array to store the intermediate result that has digital numbers, with a head entry.
-temp_words=("head")
-# Array to store the true mnemonic words.
-final_words=()
-
-IFS="."
-
-log_file expect_output.log
-
-spawn namada-ts contribute default https://contribute.namada.net $0
+spawn namada-ts contribute default https://contribute.namada.net $TOKEN
 
 expect "*Do you want to participate anonymously (if not, you’ll be asked to provide us with your name and email address)*"
 send "y\r"
@@ -25,86 +11,83 @@ expect "*Press enter to generate a keypair*"
 
 send "\r"
 
-expect "*======================*"
+set time_now [clock format [clock seconds] -format "%Y-%m-%d-%H-%M-%S"]
+
+set mnemonic_log_file "mnemonic_log-$time_now.txt"
+
+# Start recording mnemonics info
+log_file $mnemonic_log_file
+
+expect "*Press enter when you've done it*"
+
+# Stop recording
+log_file
+
+set record_mnemonic_file "./$mnemonic_log_file"
+set record_mnemonic_file_id [open $record_mnemonic_file r]
+
+set mnemonics_string ""
+set mnemonic_pattern {[1-9]*}
+while {1} {
+    set read_line [gets $record_mnemonic_file_id]
+    if {[eof $record_mnemonic_file_id]} {
+        close $record_mnemonic_file_id
+        break
+    }
+
+    if {[string match $mnemonic_pattern $read_line]} {
+        append mnemonics_string $read_line
+    }
+}
+
+set raw_mnemonics [split $mnemonics_string .]
+
+set final_mnemonics [list]
+foreach raw_mnemonic $raw_mnemonics {
+    set temp_mnemonics [split $raw_mnemonic " "]
+    set pure_mnemonic [lindex $temp_mnemonics 1]
+    lappend final_mnemonics $pure_mnemonic
+}
 
 send "\r"
 
-# First round to read out all the lines contain mnemonic words and split each line
-# into words array with digital numbers.
-while read line
-do
-    if [[ $line =~ $REG_MNEMONIC_WORDS ]] ; then
-      # Split line into array with '.'
-      temp_array=($line)
+set index_pattern {[1-9]*}
+expect "*Enter the word at index*"
 
-      # If the entry has only a digital number, ignore it, otherwise add them into temp_words.
-      for entry in ${temp_array[@]}
-      do
-        if [[ $entry =~ $REG_PURE_DIGITS ]]; then
-          echo 'This is only a digital number: ' $entry
-        else
-          temp_words+=($entry)
-        fi
-      done
-    fi
-done < expect_output.log
-
-# Second round to remove each entry's whitespaces and digital numbers.
-for raw_word in ${temp_words[@]}
-do
-  # Remove all whitespaces
-  temp=$(echo $raw_word | sed 's/ //g')
-  # Remove digital numbers
-  final_word=$(echo $temp | sed 's/[0-9]\+$//')
-  final_words+=($final_word)
-done
-
-REG_VERIFY_WORDS='^Enter the word at index*'
-# Array to store instructions for each step
-verify_prompt_array1=()
-verify_prompt_array2=()
-verify_prompt_array3=()
+set raw_ins1 [split $expect_out(buffer) " "]
+foreach ins1_index $raw_ins1 {
+    if {[string match $index_pattern $ins1_index]} {
+        puts "first index wanted: $ins1_index"
+        set first_mnemonic [lindex $final_mnemonics $ins1_index]
+        send "$first_mnemonic\r"
+    }
+}
 
 expect "*Enter the word at index*"
 
-first_slot=0
-
-while read verify_line1
-do
-    if [[ $verify_line1 =~ $REG_VERIFY_WORDS ]] ; then
-      verify_prompt_array1+=($verify_line1)
-    fi
-done < expect_output.log
-
-# Parse the 1st verify prompt and get slot number
-first_slot=$(echo ${verify_prompt_array1[0]} | tr -dc '0-9')
-
-send "${final_words[first_slot]}\r"
+set raw_ins2 [split $expect_out(buffer) " "]
+foreach ins2_index $raw_ins2 {
+    if {[string match $index_pattern $ins2_index]} {
+        puts "second index wanted: $ins2_index"
+        set second_mnemonic [lindex $final_mnemonics $ins2_index]
+        send "$second_mnemonic\r"
+    }
+}
 
 expect "*Enter the word at index*"
-second_slot=0
 
-while read verify_line2
-do
-    if [[ $verify_line2 =~ $REG_VERIFY_WORDS ]] ; then
-      verify_prompt_array2+=($verify_line2)
-    fi
-done < expect_output.log
+set raw_ins3 [split $expect_out(buffer) " "]
+foreach ins3_index $raw_ins3 {
+    if {[string match $index_pattern $ins3_index]} {
+        puts "first index wanted: $ins3_index"
+        set third_mnemonic [lindex $final_mnemonics $ins3_index]
+        send "$third_mnemonic\r"
+    }
+}
 
-# Parse the 2nd verify prompt and get slot number
-second_slot=$(echo ${verify_prompt_array2[1]} | tr -dc '0-9')
-send "${final_words[second_slot]}\r"
 
-expect "*Enter the word at index*"
-third_slot=0
 
-while read verify_line3
-do
-    if [[ $verify_line3 =~ $REG_VERIFY_WORDS ]] ; then
-      verify_prompt_array3+=($verify_line3)
-    fi
-done < expect_output.log
+expect "*1Joining Queue1*"
+set timeout -1
+puts "Mnemonics verification succeeded, good luck to you!!"
 
-# Parse the 3rd verify prompt and get slot number
-second_slot=$(echo ${verify_prompt_array3[1]} | tr -dc '0-9')
-send "${final_words[third_slot]}\r"
